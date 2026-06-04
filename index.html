@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dash Runner - Enhanced</title>
+    <title>Dash Runner - Jumper Edition</title>
     <style>
         body {
             margin: 0;
-            background: #111;
+            background: #0a0014;
             color: #fff;
             font-family: 'Segoe UI', sans-serif;
             display: flex;
@@ -18,25 +18,36 @@
             overflow: hidden;
         }
         #gameCanvas {
-            background: linear-gradient(to bottom, #1a0033, #000022);
-            border: 3px solid #00ffff;
-            box-shadow: 0 0 20px #00ffff;
-            border-radius: 5px;
+            background: linear-gradient(to bottom, #2b004a, #0b001a);
+            border: 3px solid #ff007f;
+            box-shadow: 0 0 25px #ff007f;
+            border-radius: 6px;
             cursor: pointer;
         }
         .info {
             margin-top: 15px;
             text-align: center;
             font-size: 16px;
+            text-shadow: 0 0 5px #00ffff;
         }
         span { color: #00ffff; font-weight: bold; }
+        #modeIndicator {
+            margin-top: 5px;
+            font-weight: bold;
+            font-size: 18px;
+            color: #ff007f;
+            text-shadow: 0 0 8px #ff007f;
+            animation: pulse 1s infinite alternate;
+        }
+        @keyframes pulse { from { opacity: 0.6; } to { opacity: 1; } }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas" width="800" height="400"></canvas>
     <div class="info">
-        Press <span>SPACE</span>, <span>UP ARROW</span> or <span>CLICK</span> to jump.<br>
-        Attempts: <span id="attemptCount">1</span> | Score: <span id="scoreDisplay">0</span>
+        [CUBO] Presiona <span>ESPACIO/CLICK</span> para saltar | [NAVE] Mantén presionado para <span>VOLAR</span><br>
+        Intentos: <span id="attemptCount">1</span> | Puntos: <span id="scoreDisplay">0</span>
+        <div id="modeIndicator">MODO: CUBO</div>
     </div>
 
 <script>
@@ -44,6 +55,7 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const attemptCountDisplay = document.getElementById("attemptCount");
 const scoreDisplay = document.getElementById("scoreDisplay");
+const modeIndicator = document.getElementById("modeIndicator");
 let audioCtx = null;
 
 function playTone(freq, type, duration) {
@@ -53,7 +65,7 @@ function playTone(freq, type, duration) {
         const gain = audioCtx.createGain();
         osc.type = type;
         osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
         osc.connect(gain);
         gain.connect(audioCtx.destination);
@@ -62,184 +74,383 @@ function playTone(freq, type, duration) {
     } catch(e){}
 }
 
+// ESTADOS DEL JUGADOR
 let player = {
-    x: 100,
+    x: 120,
     y: 300,
-    size: 40,
+    size: 36,
     vy: 0,
-    gravity: 1.6,
-    jumpForce: -22,
+    gravity: 1.5,
+    jumpForce: -20,
+    shipFlyForce: -1.2,
+    shipGravity: 0.7,
     grounded: false,
-    angle: 0
+    angle: 0,
+    mode: "cube" // "cube" o "ship"
 };
 
 let obstacles = [];
-let gameSpeed = 7;
+let particles = [];
+let gameSpeed = 7.5;
 let attempts = 1;
 let score = 0;
 let isGameOver = false;
 let floorY = 340;
+let ceilingY = 40;
 let scrollOffset = 0;
+let isPressing = false; // Detectar si mantiene presionado para la nave
+let nextSpawnTimer = 0;
 
 function spawnObstacle() {
-    let minDistance = 280;
-    let lastX = obstacles.length > 0 ? obstacles[obstacles.length - 1].x : canvas.width;
-    if (lastX < canvas.width - minDistance && Math.random() < 0.05) {
+    if (nextSpawnTimer > 0) {
+        nextSpawnTimer--;
+        return;
+    }
+
+    let rand = Math.random();
+    
+    // 1. Spamear portales cada cierto puntaje para cambiar el modo de juego
+    if (score > 100 && score % 400 < 10) {
+        let targetMode = player.mode === "cube" ? "ship" : "cube";
         obstacles.push({
+            type: "portal",
             x: canvas.width,
-            width: 30,
-            height: 40
+            y: 120,
+            width: 40,
+            height: 160,
+            targetMode: targetMode
         });
+        nextSpawnTimer = 90; // Evitar que aparezca algo encima del portal
+        return;
+    }
+
+    // 2. Obstáculos dinámicos según el modo actual
+    if (player.mode === "cube") {
+        if (rand < 0.3) {
+            // Pincho simple o triple
+            let count = Math.random() < 0.4 ? 3 : 1; 
+            obstacles.push({ type: "spike", x: canvas.width, y: floorY, width: 28, height: 38, count: count });
+            nextSpawnTimer = count === 3 ? 55 : 40;
+        } else if (rand < 0.5) {
+            // Bloque alto para saltar encima
+            obstacles.push({ type: "block", x: canvas.width, y: floorY - 45, width: 50, height: 45 });
+            nextSpawnTimer = 50;
+        }
+    } else {
+        // Obstáculos modo NAVE (Estilo Jumper caverna)
+        if (rand < 0.3) {
+            // Pincho en el suelo
+            obstacles.push({ type: "spike", x: canvas.width, y: floorY, width: 30, height: 45, count: 1 });
+            nextSpawnTimer = 45;
+        } else if (rand < 0.6) {
+            // Pincho colgando del techo
+            obstacles.push({ type: "ceilSpike", x: canvas.width, y: ceilingY, width: 30, height: 45 });
+            nextSpawnTimer = 45;
+        } else if (rand < 0.75) {
+            // Muro flotante en el centro que obliga a volar por arriba/abajo
+            let wallHeight = 100;
+            obstacles.push({ type: "block", x: canvas.width, y: 130 + wallHeight, width: 40, height: wallHeight });
+            nextSpawnTimer = 60;
+        }
     }
 }
 
-function jump() {
-    if (player.grounded && !isGameOver) {
-        player.vy = player.jumpForce;
-        player.grounded = false;
-        playTone(300, 'square', 0.1);
-    }
+function handlePressStart() {
+    isPressing = true;
     if (isGameOver) {
         resetGame();
+        return;
+    }
+    if (player.mode === "cube" && player.grounded) {
+        player.vy = player.jumpForce;
+        player.grounded = false;
+        playTone(320, 'square', 0.08);
     }
 }
 
+function handlePressEnd() {
+    isPressing = false;
+}
+
+// Eventos de teclado y mouse
 window.addEventListener("keydown", (e) => {
-    if (e.code === "Space" || e.code === "ArrowUp") { e.preventDefault(); jump(); }
+    if (e.code === "Space" || e.code === "ArrowUp") { e.preventDefault(); handlePressStart(); }
 });
-canvas.addEventListener("touchstart", (e) => { e.preventDefault(); jump(); });
-canvas.addEventListener("mousedown", jump);
+window.addEventListener("keyup", (e) => {
+    if (e.code === "Space" || e.code === "ArrowUp") { handlePressEnd(); }
+});
+canvas.addEventListener("mousedown", handlePressStart);
+window.addEventListener("mouseup", handlePressEnd);
+canvas.addEventListener("touchstart", (e) => { e.preventDefault(); handlePressStart(); });
+canvas.addEventListener("touchend", handlePressEnd);
 
 function resetGame() {
     obstacles = [];
+    particles = [];
+    player.mode = "cube";
+    modeIndicator.innerText = "MODO: CUBO";
+    modeIndicator.style.color = "#ff007f";
+    modeIndicator.style.textShadow = "0 0 8px #ff007f";
     player.y = floorY - player.size;
     player.vy = 0;
     player.angle = 0;
-    gameSpeed = 7;
+    gameSpeed = 7.5;
     score = 0;
     isGameOver = false;
     attempts++;
     attemptCountDisplay.innerText = attempts;
-    playTone(150, 'sawtooth', 0.3);
+    playTone(160, 'sawtooth', 0.25);
+}
+
+// Crear chispas decorativas detrás del jugador
+function createSparks(x, y, color) {
+    if (Math.random() < 0.4) {
+        particles.push({
+            x: x, y: y,
+            vx: -gameSpeed * 0.5 - Math.random() * 2,
+            vy: (Math.random() - 0.5) * 4,
+            size: Math.random() * 4 + 2,
+            alpha: 1,
+            color: color
+        });
+    }
 }
 
 function update() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (!isGameOver) {
-        scrollOffset = (scrollOffset + gameSpeed) % 40;
-    }
-
-    // Scrolling road lines
-    ctx.strokeStyle = "rgba(0, 255, 255, 0.1)";
-    ctx.lineWidth = 1;
-    for (let i = 0; i < canvas.width + 40; i += 40) {
-        ctx.beginPath();
-        ctx.moveTo(i - scrollOffset, 0);
-        ctx.lineTo(i - scrollOffset, floorY);
-        ctx.stroke();
-    }
-
-    // Floor
-    ctx.fillStyle = "#00ffff";
-    ctx.fillRect(0, floorY, canvas.width, 4);
-
-    // Background
-    ctx.fillStyle = "#001133";
-    ctx.fillRect(0, floorY + 4, canvas.width, canvas.height - floorY);
-
-    if (!isGameOver) {
-        // Player physics
-        player.vy += player.gravity;
-        player.y += player.vy;
-
-        if (player.y >= floorY - player.size) {
-            player.y = floorY - player.size;
-            player.vy = 0;
-            player.grounded = true;
-            player.angle = Math.round(player.angle / 90) * 90;
-        } else {
-            player.angle += 4.5;
-        }
-
-        // Score & speed
+        scrollOffset = (scrollOffset + gameSpeed) % 60;
         score++;
         scoreDisplay.innerText = score;
 
-        if (score % 500 === 0) {
-            gameSpeed += 0.8;
-            playTone(450, 'sine', 0.1);
+        if (score % 600 === 0) {
+            gameSpeed += 0.6;
+            playTone(480, 'sine', 0.12);
         }
-
         spawnObstacle();
     }
 
-    // Draw player (rotated)
-    ctx.save();
-    ctx.translate(player.x + player.size / 2, player.y + player.size / 2);
-    ctx.rotate((player.angle * Math.PI) / 180);
-    ctx.fillStyle = "#ff007f";
-    ctx.fillRect(-player.size / 2, -player.size / 2, player.size, player.size);
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(-player.size / 2, -player.size / 2, player.size, player.size);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(4, -12, 8, 8);
-    ctx.fillRect(-12, -12, 8, 8);
-    ctx.restore();
-
-    // Draw obstacles
-    for (let i = obstacles.length - 1; i >= 0; i--) {
-        if (!isGameOver) obstacles[i].x -= gameSpeed;
-        const obs = obstacles[i];
-        ctx.fillStyle = "#00ffff";
+    // Dibujar fondo de cuadrícula retro de Jumper
+    ctx.strokeStyle = "rgba(140, 0, 255, 0.06)";
+    ctx.lineWidth = 1;
+    for (let i = 0; i < canvas.width + 60; i += 60) {
         ctx.beginPath();
-        ctx.moveTo(obs.x, floorY);
-        ctx.lineTo(obs.x + obs.width / 2, floorY - obs.height);
-        ctx.lineTo(obs.x + obs.width, floorY);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 2;
+        ctx.moveTo(i - scrollOffset, 0);
+        ctx.lineTo(i - scrollOffset, canvas.height);
         ctx.stroke();
+    }
 
-        // Precise collision (frame-accurate, no delay)
-        const playerLeft = player.x + 5;
-        const playerRight = player.x + player.size - 5;
-        const playerBottom = player.y + player.size;
-        const playerTop = player.y + 5;
-        const obsLeft = obs.x;
-        const obsRight = obs.x + obs.width;
-        const obsTop = floorY - obs.height;
+    // Dibujar Techo y Suelo brillantes
+    ctx.fillStyle = "#ff007f";
+    ctx.fillRect(0, floorY, canvas.width, 4);
+    ctx.shadowBlur = 10; ctx.shadowColor = "#ff007f";
+    
+    if (player.mode === "ship") {
+        ctx.fillStyle = "#00ffff";
+        ctx.fillRect(0, ceilingY - 4, canvas.width, 4);
+        ctx.shadowColor = "#00ffff";
+    }
+    ctx.shadowBlur = 0; // Apagar sombras para rendimiento
 
-        if (playerRight > obsLeft && playerLeft < obsRight && playerBottom > obsTop && playerTop < floorY) {
-            if (!isGameOver) {
-                isGameOver = true;
-                playTone(100, 'sawtooth', 0.5);
+    // Rellenos oscuros
+    ctx.fillStyle = "#050010";
+    ctx.fillRect(0, floorY + 4, canvas.width, canvas.height - floorY);
+    ctx.fillRect(0, 0, canvas.width, ceilingY - 4);
+
+    if (!isGameOver) {
+        // FISICAS DINÁMICAS (Cubo vs Nave)
+        if (player.mode === "cube") {
+            player.vy += player.gravity;
+            player.y += player.vy;
+
+            if (player.y >= floorY - player.size) {
+                player.y = floorY - player.size;
+                player.vy = 0;
+                player.grounded = true;
+                player.angle = Math.round(player.angle / 90) * 90;
+                createSparks(player.x, player.y + player.size, "#ff007f");
+            } else {
+                player.angle += 5; // Rotación al saltar
             }
-        }
+        } else {
+            // Modo Nave (Estilo Flappy/Vuelo suave)
+            if (isPressing) {
+                player.vy += player.shipFlyForce;
+            } else {
+                player.vy += player.shipGravity;
+            }
+            // Fricción de aire para suavizar vuelo
+            player.vy *= 0.92;
+            player.y += player.vy;
+            player.angle = player.vy * 2; // Se inclina hacia arriba o abajo al volar
 
-        if (obs.x + obs.width < 0) {
-            obstacles.splice(i, 1);
+            // Límites de la pantalla en Nave
+            if (player.y >= floorY - player.size) {
+                player.y = floorY - player.size;
+                player.vy = 0;
+            }
+            if (player.y <= ceilingY) {
+                player.y = ceilingY;
+                player.vy = 0;
+            }
+            createSparks(player.x, player.y + player.size / 2, "#00ffff");
         }
     }
 
+    // Procesar partículas/estela
+    for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        if (!isGameOver) { p.x += p.vx; p.y += p.vy; p.alpha -= 0.03; }
+        if (p.alpha <= 0) { particles.splice(i, 1); continue; }
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.alpha;
+ctx.fillRect(p.x, p.y, p.size, p.size);
+    }
+    ctx.globalAlpha = 1.0; // Resetear opacidad
+
+    // DIBUJAR JUGADOR (Cubo o Nave)
+    ctx.save();
+    ctx.translate(player.x + player.size / 2, player.y + player.size / 2);
+    ctx.rotate((player.angle * Math.PI) / 180);
+    
+    if (player.mode === "cube") {
+        ctx.fillStyle = "#ff007f";
+        ctx.fillRect(-player.size / 2, -player.size / 2, player.size, player.size);
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(-player.size / 2, -player.size / 2, player.size, player.size);
+        // Ojos de cubo
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(4, -10, 7, 7); ctx.fillRect(-11, -10, 7, 7);
+    } else {
+        // Dibujar Nave geométrica retro
+        ctx.fillStyle = "#00ffff";
+        ctx.beginPath();
+        ctx.moveTo(-18, 10); ctx.lineTo(18, 0); ctx.lineTo(-18, -10); ctx.lineTo(-10, 0);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.stroke();
+        // Cabina de la nave
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(-2, -4, 8, 6);
+    }
+    ctx.restore();
+
+    // PROCESAR OBSTÁCULOS Y PORTALES
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        if (!isGameOver) obstacles[i].x -= gameSpeed;
+        const obs = obstacles[i];
+
+        if (obs.type === "spike") {
+            // Dibujar pincho básico o múltiple
+            ctx.fillStyle = "#00ffff";
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            for (let c = 0; c < obs.count; c++) {
+                let curX = obs.x + (c * obs.width);
+                ctx.beginPath();
+                ctx.moveTo(curX, obs.y);
+                ctx.lineTo(curX + obs.width / 2, obs.y - obs.height);
+                ctx.lineTo(curX + obs.width, obs.y);
+                ctx.closePath(); ctx.fill(); ctx.stroke();
+            }
+        } 
+        else if (obs.type === "ceilSpike") {
+            // Pincho invertido colgado del techo
+            ctx.fillStyle = "#ff007f";
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(obs.x, obs.y);
+            ctx.lineTo(obs.x + obs.width / 2, obs.y + obs.height);
+            ctx.lineTo(obs.x + obs.width, obs.y);
+            ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
+        else if (obs.type === "block") {
+            // Bloque rígido
+            ctx.fillStyle = "#3a0066";
+            ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+            ctx.strokeStyle = "#ff007f";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
+        }
+        else if (obs.type === "portal") {
+            // Portal de cambio de vehículo estilo neón vertical
+            let pColor = obs.targetMode === "ship" ? "#b300ff" : "#ff007f";
+            ctx.fillStyle = pColor;
+            ctx.shadowBlur = 15; ctx.shadowColor = pColor;
+            ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = "#ffffff";
+            ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
+        }
+
+        // LÓGICA DE COLISIONES PRECISAS
+        let hit = false;
+        let pL = player.x + 4, pR = player.x + player.size - 4;
+        let pT = player.y + 4, pB = player.y + player.size;
+
+        if (obs.type === "spike") {
+            let totalWidth = obs.width * obs.count;
+            if (pR > obs.x && pL < obs.x + totalWidth && pB > obs.y - obs.height && pT < obs.y) hit = true;
+        } 
+        else if (obs.type === "ceilSpike") {
+            if (pR > obs.x && pL < obs.x + obs.width && pT < obs.y + obs.height && pB > obs.y) hit = true;
+        }
+        else if (obs.type === "block") {
+            if (pR > obs.x && pL < obs.x + obs.width && pB > obs.y && pT < obs.y + obs.height) {
+                // Si el cubo cae encima del bloque, se apoya en él en vez de morir
+                if (player.mode === "cube" && player.vy > 0 && pB - player.vy <= obs.y + 8) {
+                    player.y = obs.y - player.size;
+                    player.vy = 0;
+                    player.grounded = true;
+                } else {
+                    hit = true;
+                }
+            }
+        }
+        else if (obs.type === "portal") {
+            // Tocar el portal activa la transformación de nave/cubo
+            if (pR > obs.x && pL < obs.x + obs.width && pB > obs.y && pT < obs.y + obs.height) {
+                if (player.mode !== obs.targetMode) {
+                    player.mode = obs.targetMode;
+                    playTone(600, 'sine', 0.15);
+                    if (player.mode === "ship") {
+                        modeIndicator.innerText = "MODO: NAVE🚀";
+                        modeIndicator.style.color = "#00ffff";
+                        modeIndicator.style.textShadow = "0 0 8px #00ffff";
+                    } else {
+                        modeIndicator.innerText = "MODO: CUBO⬛";
+                        modeIndicator.style.color = "#ff007f";
+                        modeIndicator.style.textShadow = "0 0 8px #ff007f";
+                    }
+                }
+            }
+        }
+
+        if (hit && !isGameOver) {
+            isGameOver = true;
+            playTone(90, 'sawtooth', 0.6);
+        }
+
+        // Limpieza de memoria
+        if (obs.x + 150 < 0) obstacles.splice(i, 1);
+    }
+
+    // Pantalla de Game Over
     if (isGameOver) {
-        ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+        ctx.fillStyle = "rgba(10, 0, 20, 0.88)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = "#ff007f";
-        ctx.font = "bold 42px 'Segoe UI'";
+        ctx.font = "bold 40px 'Segoe UI'";
         ctx.textAlign = "center";
-        ctx.fillText("CRASH! TRY AGAIN", canvas.width / 2, canvas.height / 2 - 20);
+        ctx.fillText("¡DESTRUIDO! INTENTA DE NUEVO", canvas.width / 2, canvas.height / 2 - 15);
         ctx.fillStyle = "#fff";
-        ctx.font = "20px 'Segoe UI'";
-        ctx.fillText("Press any key or click to restart", canvas.width / 2, canvas.height / 2 + 30);
+        ctx.font = "18px 'Segoe UI'";
+        ctx.fillText("Presiona cualquier tecla o haz clic para reiniciar", canvas.width / 2, canvas.height / 2 + 35);
     }
 
     requestAnimationFrame(update);
 }
 
 update();
-</script>
-</body>
-</html>
