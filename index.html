@@ -60,7 +60,11 @@ let audioCtx = null;
 
 function playTone(freq, type, duration) {
     try {
+        // Los navegadores exigen que el usuario interactúe antes de iniciar el sonido
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = type;
@@ -86,7 +90,7 @@ let player = {
     shipGravity: 0.7,
     grounded: false,
     angle: 0,
-    mode: "cube" // "cube" o "ship"
+    mode: "cube"
 };
 
 let obstacles = [];
@@ -98,7 +102,7 @@ let isGameOver = false;
 let floorY = 340;
 let ceilingY = 40;
 let scrollOffset = 0;
-let isPressing = false; // Detectar si mantiene presionado para la nave
+let isPressing = false;
 let nextSpawnTimer = 0;
 
 function spawnObstacle() {
@@ -109,7 +113,7 @@ function spawnObstacle() {
 
     let rand = Math.random();
     
-    // 1. Spamear portales cada cierto puntaje para cambiar el modo de juego
+    // Generar portales cada 400 puntos
     if (score > 100 && score % 400 < 10) {
         let targetMode = player.mode === "cube" ? "ship" : "cube";
         obstacles.push({
@@ -120,36 +124,29 @@ function spawnObstacle() {
             height: 160,
             targetMode: targetMode
         });
-        nextSpawnTimer = 90; // Evitar que aparezca algo encima del portal
+        nextSpawnTimer = 90;
         return;
     }
 
-    // 2. Obstáculos dinámicos según el modo actual
     if (player.mode === "cube") {
         if (rand < 0.3) {
-            // Pincho simple o triple
             let count = Math.random() < 0.4 ? 3 : 1; 
             obstacles.push({ type: "spike", x: canvas.width, y: floorY, width: 28, height: 38, count: count });
             nextSpawnTimer = count === 3 ? 55 : 40;
         } else if (rand < 0.5) {
-            // Bloque alto para saltar encima
             obstacles.push({ type: "block", x: canvas.width, y: floorY - 45, width: 50, height: 45 });
             nextSpawnTimer = 50;
         }
     } else {
-        // Obstáculos modo NAVE (Estilo Jumper caverna)
         if (rand < 0.3) {
-            // Pincho en el suelo
             obstacles.push({ type: "spike", x: canvas.width, y: floorY, width: 30, height: 45, count: 1 });
             nextSpawnTimer = 45;
         } else if (rand < 0.6) {
-            // Pincho colgando del techo
             obstacles.push({ type: "ceilSpike", x: canvas.width, y: ceilingY, width: 30, height: 45 });
             nextSpawnTimer = 45;
         } else if (rand < 0.75) {
-            // Muro flotante en el centro que obliga a volar por arriba/abajo
             let wallHeight = 100;
-            obstacles.push({ type: "block", x: canvas.width, y: 130 + wallHeight, width: 40, height: wallHeight });
+            obstacles.push({ type: "block", x: canvas.width, y: 130, width: 40, height: wallHeight });
             nextSpawnTimer = 60;
         }
     }
@@ -172,7 +169,6 @@ function handlePressEnd() {
     isPressing = false;
 }
 
-// Eventos de teclado y mouse
 window.addEventListener("keydown", (e) => {
     if (e.code === "Space" || e.code === "ArrowUp") { e.preventDefault(); handlePressStart(); }
 });
@@ -202,7 +198,6 @@ function resetGame() {
     playTone(160, 'sawtooth', 0.25);
 }
 
-// Crear chispas decorativas detrás del jugador
 function createSparks(x, y, color) {
     if (Math.random() < 0.4) {
         particles.push({
@@ -231,7 +226,7 @@ function update() {
         spawnObstacle();
     }
 
-    // Dibujar fondo de cuadrícula retro de Jumper
+    // Cuadrícula de fondo
     ctx.strokeStyle = "rgba(140, 0, 255, 0.06)";
     ctx.lineWidth = 1;
     for (let i = 0; i < canvas.width + 60; i += 60) {
@@ -241,25 +236,20 @@ function update() {
         ctx.stroke();
     }
 
-    // Dibujar Techo y Suelo brillantes
+    // Suelo y techo
     ctx.fillStyle = "#ff007f";
     ctx.fillRect(0, floorY, canvas.width, 4);
-    ctx.shadowBlur = 10; ctx.shadowColor = "#ff007f";
     
     if (player.mode === "ship") {
         ctx.fillStyle = "#00ffff";
         ctx.fillRect(0, ceilingY - 4, canvas.width, 4);
-        ctx.shadowColor = "#00ffff";
     }
-    ctx.shadowBlur = 0; // Apagar sombras para rendimiento
 
-    // Rellenos oscuros
     ctx.fillStyle = "#050010";
     ctx.fillRect(0, floorY + 4, canvas.width, canvas.height - floorY);
     ctx.fillRect(0, 0, canvas.width, ceilingY - 4);
 
     if (!isGameOver) {
-        // FISICAS DINÁMICAS (Cubo vs Nave)
         if (player.mode === "cube") {
             player.vy += player.gravity;
             player.y += player.vy;
@@ -271,21 +261,18 @@ function update() {
                 player.angle = Math.round(player.angle / 90) * 90;
                 createSparks(player.x, player.y + player.size, "#ff007f");
             } else {
-                player.angle += 5; // Rotación al saltar
+                player.angle += 5;
             }
         } else {
-            // Modo Nave (Estilo Flappy/Vuelo suave)
             if (isPressing) {
                 player.vy += player.shipFlyForce;
             } else {
                 player.vy += player.shipGravity;
             }
-            // Fricción de aire para suavizar vuelo
             player.vy *= 0.92;
             player.y += player.vy;
-            player.angle = player.vy * 2; // Se inclina hacia arriba o abajo al volar
+            player.angle = player.vy * 2;
 
-            // Límites de la pantalla en Nave
             if (player.y >= floorY - player.size) {
                 player.y = floorY - player.size;
                 player.vy = 0;
@@ -298,18 +285,18 @@ function update() {
         }
     }
 
-    // Procesar partículas/estela
+    // Partículas
     for (let i = particles.length - 1; i >= 0; i--) {
         let p = particles[i];
         if (!isGameOver) { p.x += p.vx; p.y += p.vy; p.alpha -= 0.03; }
         if (p.alpha <= 0) { particles.splice(i, 1); continue; }
         ctx.fillStyle = p.color;
         ctx.globalAlpha = p.alpha;
-ctx.fillRect(p.x, p.y, p.size, p.size);
+        ctx.fillRect(p.x, p.y, p.size, p.size);
     }
-    ctx.globalAlpha = 1.0; // Resetear opacidad
+    ctx.globalAlpha = 1.0;
 
-    // DIBUJAR JUGADOR (Cubo o Nave)
+    // Dibujar jugador
     ctx.save();
     ctx.translate(player.x + player.size / 2, player.y + player.size / 2);
     ctx.rotate((player.angle * Math.PI) / 180);
@@ -320,29 +307,25 @@ ctx.fillRect(p.x, p.y, p.size, p.size);
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 3;
         ctx.strokeRect(-player.size / 2, -player.size / 2, player.size, player.size);
-        // Ojos de cubo
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(4, -10, 7, 7); ctx.fillRect(-11, -10, 7, 7);
     } else {
-        // Dibujar Nave geométrica retro
         ctx.fillStyle = "#00ffff";
         ctx.beginPath();
         ctx.moveTo(-18, 10); ctx.lineTo(18, 0); ctx.lineTo(-18, -10); ctx.lineTo(-10, 0);
         ctx.closePath(); ctx.fill();
         ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.stroke();
-        // Cabina de la nave
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(-2, -4, 8, 6);
     }
     ctx.restore();
 
-    // PROCESAR OBSTÁCULOS Y PORTALES
+    // Obstáculos y colisiones
     for (let i = obstacles.length - 1; i >= 0; i--) {
         if (!isGameOver) obstacles[i].x -= gameSpeed;
         const obs = obstacles[i];
 
         if (obs.type === "spike") {
-            // Dibujar pincho básico o múltiple
             ctx.fillStyle = "#00ffff";
             ctx.strokeStyle = "#ffffff";
             ctx.lineWidth = 2;
@@ -352,11 +335,12 @@ ctx.fillRect(p.x, p.y, p.size, p.size);
                 ctx.moveTo(curX, obs.y);
                 ctx.lineTo(curX + obs.width / 2, obs.y - obs.height);
                 ctx.lineTo(curX + obs.width, obs.y);
-                ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.closePath(); 
+                ctx.fill(); 
+                ctx.stroke();
             }
         } 
         else if (obs.type === "ceilSpike") {
-            // Pincho invertido colgado del techo
             ctx.fillStyle = "#ff007f";
             ctx.strokeStyle = "#ffffff";
             ctx.lineWidth = 2;
@@ -364,10 +348,11 @@ ctx.fillRect(p.x, p.y, p.size, p.size);
             ctx.moveTo(obs.x, obs.y);
             ctx.lineTo(obs.x + obs.width / 2, obs.y + obs.height);
             ctx.lineTo(obs.x + obs.width, obs.y);
-            ctx.closePath(); ctx.fill(); ctx.stroke();
+            ctx.closePath(); 
+            ctx.fill(); 
+            ctx.stroke();
         }
         else if (obs.type === "block") {
-            // Bloque rígido
             ctx.fillStyle = "#3a0066";
             ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
             ctx.strokeStyle = "#ff007f";
@@ -375,17 +360,13 @@ ctx.fillRect(p.x, p.y, p.size, p.size);
             ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
         }
         else if (obs.type === "portal") {
-            // Portal de cambio de vehículo estilo neón vertical
             let pColor = obs.targetMode === "ship" ? "#b300ff" : "#ff007f";
             ctx.fillStyle = pColor;
-            ctx.shadowBlur = 15; ctx.shadowColor = pColor;
             ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
-            ctx.shadowBlur = 0;
             ctx.strokeStyle = "#ffffff";
             ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
         }
 
-        // LÓGICA DE COLISIONES PRECISAS
         let hit = false;
         let pL = player.x + 4, pR = player.x + player.size - 4;
         let pT = player.y + 4, pB = player.y + player.size;
@@ -399,7 +380,6 @@ ctx.fillRect(p.x, p.y, p.size, p.size);
         }
         else if (obs.type === "block") {
             if (pR > obs.x && pL < obs.x + obs.width && pB > obs.y && pT < obs.y + obs.height) {
-                // Si el cubo cae encima del bloque, se apoya en él en vez de morir
                 if (player.mode === "cube" && player.vy > 0 && pB - player.vy <= obs.y + 8) {
                     player.y = obs.y - player.size;
                     player.vy = 0;
@@ -410,7 +390,6 @@ ctx.fillRect(p.x, p.y, p.size, p.size);
             }
         }
         else if (obs.type === "portal") {
-            // Tocar el portal activa la transformación de nave/cubo
             if (pR > obs.x && pL < obs.x + obs.width && pB > obs.y && pT < obs.y + obs.height) {
                 if (player.mode !== obs.targetMode) {
                     player.mode = obs.targetMode;
@@ -433,11 +412,9 @@ ctx.fillRect(p.x, p.y, p.size, p.size);
             playTone(90, 'sawtooth', 0.6);
         }
 
-        // Limpieza de memoria
         if (obs.x + 150 < 0) obstacles.splice(i, 1);
     }
 
-    // Pantalla de Game Over
     if (isGameOver) {
         ctx.fillStyle = "rgba(10, 0, 20, 0.88)";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -453,4 +430,5 @@ ctx.fillRect(p.x, p.y, p.size, p.size);
     requestAnimationFrame(update);
 }
 
+// Inicialización del juego limpia
 update();
